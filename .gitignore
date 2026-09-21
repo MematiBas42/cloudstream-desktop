@@ -1,0 +1,15 @@
+patched/
+cloudstream-desktop-unofficial/
+.gradle/
+build/
+**/build/
+.kotlin/
+
+# Agent & AI Artifacts
+CLAUDE.md
+.claude/
+.agents/
+skills-lock.json
+/workflows/
+/cloudstream-desktop-bin/
+

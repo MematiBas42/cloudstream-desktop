@@ -1,0 +1,104 @@
+name: Desktop CI/CD
+
+'on':
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build & Test (Linux)
+        if: runner.os == 'Linux'
+        run: ./gradlew :common:test :player-mpv:test :plugin-runtime:compileKotlin :desktop-app:compileKotlin
+
+      - name: Build & Test (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: gradlew.bat :common:test :player-mpv:test :plugin-runtime:compileKotlin :desktop-app:compileKotlin
+
+      - name: Package Linux (Deb & Portable)
+        if: runner.os == 'Linux'
+        run: |
+          ./gradlew :desktop-app:packageReleaseDeb :desktop-app:createReleaseDistributable
+          mkdir -p build-artifacts
+          cp desktop-app/build/compose/binaries/main-release/deb/*.deb build-artifacts/ 2>/dev/null || true
+          tar -czf build-artifacts/CloudStream-1.0.0-Linux-x64-Portable.tar.gz -C desktop-app/build/compose/binaries/main-release/app cloudstream-desktop
+          cd build-artifacts && sha256sum $(ls -1 | grep -v "SHA256") > SHA256SUMS-linux.txt
+
+      - name: Package Windows (MSI, EXE & Portable)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ./gradlew.bat :desktop-app:packageReleaseMsi :desktop-app:packageReleaseExe :desktop-app:createReleaseDistributable
+          mkdir -p build-artifacts
+          cp desktop-app/build/compose/binaries/main-release/msi/*.msi build-artifacts/ 2>/dev/null || true
+          cp desktop-app/build/compose/binaries/main-release/exe/*.exe build-artifacts/CloudStream-1.0.0-Windows-x64-Setup.exe 2>/dev/null || true
+          7z a -tzip build-artifacts/CloudStream-1.0.0-Windows-x64-Portable.zip ./desktop-app/build/compose/binaries/main-release/app/cloudstream-desktop
+          cd build-artifacts && sha256sum $(ls -1 | grep -v "SHA256") > SHA256SUMS-windows.txt
+
+      - name: Upload Linux Artifacts
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudstream-desktop-linux
+          path: build-artifacts/*
+          if-no-files-found: warn
+
+      - name: Upload Windows Artifacts
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudstream-desktop-windows
+          path: build-artifacts/*
+          if-no-files-found: warn
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Assemble Release Assets
+        run: |
+          mkdir -p release-dist
+          find all-artifacts -type f -exec cp {} release-dist/ \;
+          cd release-dist
+          cat SHA256SUMS-*.txt > SHA256SUMS.txt
+          rm -f SHA256SUMS-*.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-dist/*
+          generate_release_notes: true
+          prerelease: true

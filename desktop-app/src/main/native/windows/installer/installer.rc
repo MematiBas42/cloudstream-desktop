@@ -1,0 +1,3 @@
+1 ICON "../../../resources/logo_ui.ico"
+1 24 "../app.manifest"
+100 RCDATA "/tmp/payload.zip"
